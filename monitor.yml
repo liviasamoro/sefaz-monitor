@@ -1,0 +1,70 @@
+name: Monitor SEFAZ Nacional
+
+# Roda todo dia útil às 10:00 UTC = 07:00 BRT (horário de Brasília)
+# Para mudar o horário: https://crontab.guru
+on:
+  schedule:
+    - cron: '0 10 * * 1-5'
+
+  # Permite disparar manualmente pela aba Actions do GitHub
+  workflow_dispatch:
+
+jobs:
+  monitorar:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Baixa o conteúdo do repositório para o servidor do GitHub
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      # 2. Instala o Python 3.11
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # 3. Instala a única dependência externa
+      - name: Instalar dependências
+        run: pip install requests
+
+      # 4. Restaura o arquivo de hashes salvo na execução anterior
+      #    (GitHub Actions não tem memória entre execuções — usamos cache para isso)
+      - name: Restaurar hashes anteriores
+        uses: actions/cache@v4
+        with:
+          path: sefaz_hashes.json
+          key: sefaz-hashes-${{ runner.os }}
+          restore-keys: sefaz-hashes-
+
+      # 5. Roda o script principal, injetando as credenciais via variáveis de ambiente
+      - name: Executar monitoramento
+        env:
+          # --- E-mail ---
+          SMTP_SERVIDOR:  ${{ secrets.SMTP_SERVIDOR }}
+          SMTP_PORTA:     ${{ secrets.SMTP_PORTA }}
+          SMTP_USUARIO:   ${{ secrets.SMTP_USUARIO }}
+          SMTP_SENHA:     ${{ secrets.SMTP_SENHA }}
+          EMAIL_DESTINO:  ${{ secrets.EMAIL_DESTINO }}
+          # --- Telegram ---
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python sefaz_monitor.py
+
+      # 6. Salva o arquivo de hashes atualizado para a próxima execução
+      #    (roda mesmo se o passo anterior falhar, para não perder o estado)
+      - name: Salvar hashes atualizados
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: sefaz_hashes.json
+          key: sefaz-hashes-${{ runner.os }}-${{ github.run_id }}
+
+      # 7. Faz upload do log como artefato (disponível por 30 dias na aba Actions)
+      - name: Publicar log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ github.run_id }}
+          path: sefaz_monitor.log
+          retention-days: 30
